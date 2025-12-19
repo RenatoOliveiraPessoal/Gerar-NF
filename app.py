@@ -1,98 +1,87 @@
 import streamlit as st
 import requests
-import os
+import time
 import base64
 import streamlit.components.v1 as components
-from brazilfiscalreport.danfe import Danfe
 
-# ==============================
-# CONFIGURAÇÃO STREAMLIT
-# ==============================
 st.set_page_config(
-    page_title="Download NF-e - DANFE",
+    page_title="Download NF-e - Meu Danfe",
     layout="centered"
 )
 
 st.title("⬇️ Download automático de NF-e (PDF)")
 
-URL_BASE = "https://prevedello.com.br/nfe/baixar.php?nfe="
+API_KEY = "38a1c60c-75e1-452c-aa8f-91b1493440b7"
 
-# ==============================
-# INPUT CHAVE
-# ==============================
+HEADERS = {
+    "accept": "application/json",
+    "Api-Key": API_KEY
+}
+
 chave = st.text_input(
     "Chave de Acesso da NF-e (44 dígitos)",
     max_chars=44
 )
 
-# ==============================
-# BOTÃO
-# ==============================
 if st.button("Enviar"):
     if not chave or len(chave) != 44 or not chave.isdigit():
         st.error("Informe uma chave válida com 44 números.")
     else:
-        try:
-            # ==============================
-            # Número da NF (posição 26–34)
-            # ==============================
-            numero_nf = chave[25:34]
-            file_name = f"NF{numero_nf}.pdf"
-            file_path = os.path.join(os.getcwd(), file_name)
+        # ==============================
+        # Número da NF-e (posições 26–34)
+        # ==============================
+        numero_nf = chave[25:34]
 
-            # ==============================
-            # 1️⃣ Baixar XML
-            # ==============================
-            with st.spinner("Baixando XML da NF-e..."):
-                url = f"{URL_BASE}{chave}"
-                response = requests.get(url, timeout=30)
-                response.raise_for_status()
+        # ==============================
+        # 1️⃣ Solicita NF-e
+        # ==============================
+        url_add = f"https://api.meudanfe.com.br/v2/fd/add/{chave}"
 
-                xml_content = response.text.strip()
+        with st.spinner("Solicitando NF-e..."):
+            response_add = requests.put(url_add, headers=HEADERS)
+            time.sleep(1)
 
-                if not xml_content.startswith("<"):
-                    st.error("Resposta não é um XML válido.")
-                    st.stop()
+        if response_add.status_code != 200:
+            st.error("Erro ao solicitar NF-e")
+            st.text(response_add.text)
+        else:
+            # ==============================
+            # 2️⃣ Baixar PDF
+            # ==============================
+            url_pdf = f"https://api.meudanfe.com.br/v2/fd/get/da/{chave}"
 
-            # ==============================
-            # 2️⃣ Gerar DANFE (PDF)
-            # ==============================
-            with st.spinner("Gerando DANFE em PDF..."):
-                danfe = Danfe(xml=xml_content)
-                danfe.output(file_path)
+            with st.spinner("Baixando PDF..."):
+                response_pdf = requests.get(url_pdf, headers=HEADERS)
 
-            # ==============================
-            # 3️⃣ Converter PDF para Base64
-            # ==============================
-            with open(file_path, "rb") as f:
-                pdf_base64 = base64.b64encode(f.read()).decode("utf-8")
+            if response_pdf.status_code != 200:
+                st.error("Erro ao baixar PDF")
+                st.text(response_pdf.text)
+            else:
+                json_pdf = response_pdf.json()
+                pdf_base64 = json_pdf.get("data")
 
-            # ==============================
-            # 4️⃣ DOWNLOAD AUTOMÁTICO
-            # ==============================
-            html_download = f"""
-                <html>
-                    <body>
-                        <a id="downloadLink"
-                           href="data:application/pdf;base64,{pdf_base64}"
-                           download="{file_name}">
-                        </a>
-                        <script>
-                            document.getElementById('downloadLink').click();
-                        </script>
-                    </body>
-                </html>
-            """
+                if not pdf_base64:
+                    st.error("PDF não encontrado na resposta da API.")
+                else:
+                    # ==============================
+                    # DOWNLOAD AUTOMÁTICO (JS)
+                    # ==============================
+                    file_name = f"NF{numero_nf}.pdf"
 
-            components.html(html_download, height=0, width=0)
+                    html_download = f"""
+                        <html>
+                            <body>
+                                <a id="downloadLink"
+                                   href="data:application/pdf;base64,{pdf_base64}"
+                                   download="{file_name}">
+                                </a>
+                                <script>
+                                    document.getElementById('downloadLink').click();
+                                </script>
+                            </body>
+                        </html>
+                    """
 
-            st.success(f"Download iniciado automaticamente: {file_name}")
+                    components.html(html_download, height=0, width=0)
 
-            # ==============================
-            # 5️⃣ Limpeza (opcional)
-            # ==============================
-            os.remove(file_path)
-
-        except Exception as e:
-            st.error("Erro ao gerar o DANFE")
-            st.exception(e)
+                    st.success(f"Download iniciado automaticamente: {file_name}")
